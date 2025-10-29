@@ -91,6 +91,14 @@ const AdminLogin = () => {
         return;
       }
 
+      // Ensure profile exists (upsert)
+      await supabase
+        .from("profiles")
+        .upsert(
+          { user_id: authData.user.id, email: authData.user.email },
+          { onConflict: "user_id" }
+        );
+
       toast.success("로그인 성공!");
       navigate("/admin/dashboard");
     } catch (error) {
