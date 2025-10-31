@@ -138,12 +138,13 @@ const Index = () => {
         console.error('Edge function error:', error);
       }
 
-      // Handle conflict - retry up to 3 times
-      if (data?.conflict && retryCount < 3) {
+      // Handle retry - retry up to 3 times with random delay
+      if (data?.retry && retryCount < 3) {
         console.log(`Retrying seat assignment (attempt ${retryCount + 1}/3)`);
         setLoading(false);
         setIsSubmitting(false);
         
+        // Random delay 200-500ms to prevent collision on retry
         await new Promise(resolve => setTimeout(resolve, 200 + Math.random() * 300));
         return handleRegister(e, retryCount + 1);
       }
@@ -156,7 +157,12 @@ const Index = () => {
 
       // Edge Function이 명시적인 에러 메시지를 반환한 경우
       if (data?.error) {
-        toast.error(data.error);
+        // 3번 재시도 후에도 실패한 경우 더 명확한 메시지
+        if (retryCount >= 2 && data?.retry) {
+          toast.error("현재 많은 사용자가 접속 중입니다. 잠시 후 다시 시도해주세요");
+        } else {
+          toast.error(data.error);
+        }
         return;
       }
 
