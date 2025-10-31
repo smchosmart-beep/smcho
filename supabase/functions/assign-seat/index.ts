@@ -310,9 +310,9 @@ Deno.serve(async (req) => {
       timeGapFromAvailableCheck: seatsSelectedTime - availableSeatsTime
     });
 
-    // Update existing attendee with seat assignment (Optimistic Locking)
+    // Update existing attendee with seat assignment using row-level locking
     const updateAttemptTime = Date.now();
-    console.log(`[CONCURRENCY] Attempting update at ${updateAttemptTime}ms:`, {
+    console.log(`[CONCURRENCY] Attempting update with row lock at ${updateAttemptTime}ms:`, {
       attendeeId: existingAttendee.id,
       currentVersion: existingAttendee.version,
       targetVersion: (existingAttendee.version || 0) + 1,
@@ -321,30 +321,63 @@ Deno.serve(async (req) => {
       timeGapFromSelection: updateAttemptTime - seatsSelectedTime
     });
     const seatNumberString = selectedSeats.join(', ');
-    const { data: updatedAttendee, error: updateError } = await supabase
-      .from('attendees')
-      .update({
-        attendee_count,
-        seat_number: seatNumberString,
-        version: (existingAttendee.version || 0) + 1,
-      })
-      .eq('id', existingAttendee.id)
-      .eq('version', existingAttendee.version || 0)
-      .select()
-      .maybeSingle();
+    const { data: updatedAttendeeData, error: updateError } = await supabase
+      .rpc('assign_seat_with_lock', {
+        p_attendee_id: existingAttendee.id,
+        p_seat_number: seatNumberString,
+        p_attendee_count: attendee_count,
+        p_current_version: existingAttendee.version || 0
+      });
+    
+    const updatedAttendee = updatedAttendeeData as any;
 
     const updateCompleteTime = Date.now();
     
     if (updateError || !updatedAttendee) {
       console.error(`[CONCURRENCY] Update failed at ${updateCompleteTime}ms:`, {
         error: updateError,
+        errorMessage: updateError?.message,
+        errorDetails: updateError?.details,
         hasUpdatedAttendee: !!updatedAttendee,
         timeSinceStart: updateCompleteTime - startTime,
         timeSinceAttempt: updateCompleteTime - updateAttemptTime
       });
       
-      // Version conflict - another user assigned seat first
-      if (!updatedAttendee) {
+      // Lock conflict - another request is processing this attendee
+      if (updateError?.message?.includes('lock_not_available')) {
+        console.log('[LOCK] Row is locked by another transaction');
+        
+        await logAssignment(
+          supabase,
+          session_id,
+          existingAttendee.id,
+          name,
+          phone,
+          attendee_count,
+          'conflict',
+          selectedSeats.join(', '),
+          'Row lock conflict - 다른 요청이 처리 중',
+          existingAttendee.version,
+          undefined,
+          startTime
+        );
+        
+        return new Response(
+          JSON.stringify({ 
+            error: '다른 사용자가 처리 중입니다. 잠시 후 다시 시도해주세요.',
+            retry: true 
+          }),
+          { 
+            status: 409,
+            headers: { ...corsHeaders, 'Content-Type': 'application/json' } 
+          }
+        );
+      }
+      
+      // Version conflict - seat was assigned between check and update
+      if (updateError?.message?.includes('version_conflict') || !updatedAttendee) {
+        console.log('[VERSION] Version conflict detected, seat was assigned by another request');
+        
         await logAssignment(
           supabase,
           session_id,
@@ -362,16 +395,41 @@ Deno.serve(async (req) => {
         
         return new Response(
           JSON.stringify({ 
-            error: '좌석이 이미 다른 사용자에게 배정되었습니다. 다시 시도해주세요.',
-            conflict: true 
+            error: '좌석이 이미 배정되었습니다. 다시 시도해주세요.',
+            retry: true 
           }),
-          { status: 409, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+          { 
+            status: 409,
+            headers: { ...corsHeaders, 'Content-Type': 'application/json' } 
+          }
         );
       }
       
+      // Other errors
+      await logAssignment(
+        supabase,
+        session_id,
+        existingAttendee.id,
+        name,
+        phone,
+        attendee_count,
+        'error',
+        selectedSeats.join(', '),
+        updateError?.message || 'Unknown error',
+        existingAttendee.version,
+        undefined,
+        startTime
+      );
+      
       return new Response(
-        JSON.stringify({ error: '좌석 배정 중 오류가 발생했습니다' }),
-        { status: 500, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+        JSON.stringify({ 
+          error: '좌석 배정 중 오류가 발생했습니다. 다시 시도해주세요.',
+          retry: true 
+        }),
+        { 
+          status: 500,
+          headers: { ...corsHeaders, 'Content-Type': 'application/json' } 
+        }
       );
     }
 
