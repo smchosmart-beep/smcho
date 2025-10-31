@@ -152,7 +152,13 @@ Deno.serve(async (req) => {
     }
 
     // Valid pre-registered attendee without seat assignment
-    console.log('Valid pre-registered attendee, assigning seat:', existingAttendee.id);
+    const attendeeLookupTime = Date.now();
+    console.log(`[CONCURRENCY] Attendee lookup complete at ${attendeeLookupTime}ms:`, {
+      id: existingAttendee.id,
+      name: existingAttendee.name,
+      version: existingAttendee.version,
+      timeSinceStart: attendeeLookupTime - startTime
+    });
 
     // Get active seat rows for this session
     const { data: seatRows, error: rowsError } = await supabase
@@ -196,7 +202,12 @@ Deno.serve(async (req) => {
       });
     }
 
-    console.log('Assigned seats:', Array.from(assignedSeats));
+    const assignedSeatsTime = Date.now();
+    console.log(`[CONCURRENCY] Assigned seats fetched at ${assignedSeatsTime}ms:`, {
+      count: assignedSeats.size,
+      seats: Array.from(assignedSeats),
+      timeSinceStart: assignedSeatsTime - startTime
+    });
 
     // Generate all possible seats
     const allSeats: string[] = [];
@@ -210,7 +221,12 @@ Deno.serve(async (req) => {
     // Find available seats in order
     const availableSeats = allSeats.filter(seat => !assignedSeats.has(seat));
 
-    console.log('Available seats:', availableSeats);
+    const availableSeatsTime = Date.now();
+    console.log(`[CONCURRENCY] Available seats calculated at ${availableSeatsTime}ms:`, {
+      count: availableSeats.length,
+      seats: availableSeats.slice(0, 10), // First 10 for brevity
+      timeSinceStart: availableSeatsTime - startTime
+    });
 
     if (availableSeats.length < attendee_count) {
       await logAssignment(
@@ -286,9 +302,24 @@ Deno.serve(async (req) => {
       }
     }
 
-    console.log('Selected seats:', selectedSeats);
+    const seatsSelectedTime = Date.now();
+    console.log(`[CONCURRENCY] Seats selected at ${seatsSelectedTime}ms:`, {
+      selectedSeats,
+      attendeeCount: attendee_count,
+      timeSinceStart: seatsSelectedTime - startTime,
+      timeGapFromAvailableCheck: seatsSelectedTime - availableSeatsTime
+    });
 
     // Update existing attendee with seat assignment (Optimistic Locking)
+    const updateAttemptTime = Date.now();
+    console.log(`[CONCURRENCY] Attempting update at ${updateAttemptTime}ms:`, {
+      attendeeId: existingAttendee.id,
+      currentVersion: existingAttendee.version,
+      targetVersion: (existingAttendee.version || 0) + 1,
+      seatNumber: selectedSeats.join(', '),
+      timeSinceStart: updateAttemptTime - startTime,
+      timeGapFromSelection: updateAttemptTime - seatsSelectedTime
+    });
     const seatNumberString = selectedSeats.join(', ');
     const { data: updatedAttendee, error: updateError } = await supabase
       .from('attendees')
@@ -302,8 +333,15 @@ Deno.serve(async (req) => {
       .select()
       .maybeSingle();
 
+    const updateCompleteTime = Date.now();
+    
     if (updateError || !updatedAttendee) {
-      console.error('Seat assignment conflict or error:', updateError);
+      console.error(`[CONCURRENCY] Update failed at ${updateCompleteTime}ms:`, {
+        error: updateError,
+        hasUpdatedAttendee: !!updatedAttendee,
+        timeSinceStart: updateCompleteTime - startTime,
+        timeSinceAttempt: updateCompleteTime - updateAttemptTime
+      });
       
       // Version conflict - another user assigned seat first
       if (!updatedAttendee) {
@@ -337,7 +375,16 @@ Deno.serve(async (req) => {
       );
     }
 
-    console.log('Successfully assigned seat:', updatedAttendee);
+    const successTime = Date.now();
+    console.log(`[CONCURRENCY] Successfully assigned seat at ${successTime}ms:`, {
+      attendeeId: updatedAttendee.id,
+      seatNumber: updatedAttendee.seat_number,
+      oldVersion: existingAttendee.version,
+      newVersion: updatedAttendee.version,
+      timeSinceStart: successTime - startTime,
+      timeSinceAttempt: successTime - updateAttemptTime,
+      totalProcessingTime: successTime - startTime
+    });
 
     await logAssignment(
       supabase,
