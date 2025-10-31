@@ -311,6 +311,15 @@ export type Database = {
       [_ in never]: never
     }
     Functions: {
+      assign_seat_with_lock: {
+        Args: {
+          p_attendee_count: number
+          p_attendee_id: string
+          p_current_version: number
+          p_seat_number: string
+        }
+        Returns: Json
+      }
       has_role: {
         Args: {
           _role: Database["public"]["Enums"]["app_role"]
