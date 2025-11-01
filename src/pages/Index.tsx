@@ -357,7 +357,7 @@ const Index = () => {
                   />
                 </div>
                 <div className="space-y-2">
-                  <Label htmlFor="name">아동명</Label>
+                  <Label htmlFor="name" translate="no">아동명</Label>
                   <Input
                     id="name"
                     type="text"
@@ -430,7 +430,7 @@ const Index = () => {
               </DialogHeader>
               <form onSubmit={handleOnSiteRegistration} className="space-y-4">
                 <div className="space-y-2">
-                  <Label htmlFor="onsite-name">아동명</Label>
+                  <Label htmlFor="onsite-name" translate="no">아동명</Label>
                   <Input
                     id="onsite-name"
                     type="text"
